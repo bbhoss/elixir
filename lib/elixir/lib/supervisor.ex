@@ -521,7 +521,8 @@ defmodule Supervisor do
   @type sup_flags() :: %{
           strategy: strategy(),
           intensity: non_neg_integer(),
-          period: pos_integer()
+          period: pos_integer(),
+          auto_shutdown: auto_shutdown()
         }
 
   @typedoc "The supervisor reference"
@@ -532,6 +533,7 @@ defmodule Supervisor do
           {:strategy, strategy}
           | {:max_restarts, non_neg_integer}
           | {:max_seconds, pos_integer}
+          | {:auto_shutdown, auto_shutdown}
 
   @typedoc "Supported restart options"
   @type restart :: :permanent | :transient | :temporary
@@ -541,6 +543,9 @@ defmodule Supervisor do
 
   @typedoc "Supported strategies"
   @type strategy :: :one_for_one | :one_for_all | :rest_for_one
+
+  @typedoc "Supported automatic shutdown options"
+  @type auto_shutdown :: :never | :any_significant | :all_significant
 
   @typedoc """
   Supervisor type.
@@ -561,7 +566,8 @@ defmodule Supervisor do
           optional(:restart) => restart(),
           optional(:shutdown) => shutdown(),
           optional(:type) => type(),
-          optional(:modules) => [module()] | :dynamic
+          optional(:modules) => [module()] | :dynamic,
+          optional(:significant) => boolean()
         }
 
   @doc """
@@ -611,7 +617,9 @@ defmodule Supervisor do
           [option | init_option]
         ) :: {:ok, pid} | {:error, {:already_started, pid} | {:shutdown, term} | term}
   def start_link(children, options) when is_list(children) do
-    {sup_opts, start_opts} = Keyword.split(options, [:strategy, :max_seconds, :max_restarts])
+    {sup_opts, start_opts} =
+      Keyword.split(options, [:strategy, :max_seconds, :max_restarts, :auto_shutdown])
+
     start_link(Supervisor.Default, init(children, sup_opts), start_opts)
   end
 
@@ -645,6 +653,9 @@ defmodule Supervisor do
 
     * `:max_seconds` - the time frame in seconds in which `:max_restarts`
       applies. Defaults to `5`.
+
+    * `:auto_shutdown` - the automatic shutdown option. It can be either
+      `:never`, `:any_significant`, or `:all_significant`
 
   The `:strategy` option is required and by default a maximum of 3 restarts
   is allowed within 5 seconds. Check the `Supervisor` module for a detailed
@@ -681,7 +692,15 @@ defmodule Supervisor do
 
     intensity = Keyword.get(options, :max_restarts, 3)
     period = Keyword.get(options, :max_seconds, 5)
-    flags = %{strategy: strategy, intensity: intensity, period: period}
+    auto_shutdown = Keyword.get(options, :auto_shutdown, :never)
+
+    flags = %{
+      strategy: strategy,
+      intensity: intensity,
+      period: period,
+      auto_shutdown: auto_shutdown
+    }
+
     {:ok, {flags, Enum.map(children, &init_child/1)}}
   end
 
@@ -805,7 +824,8 @@ defmodule Supervisor do
 
   def child_spec(module_or_map, overrides) do
     Enum.reduce(overrides, init_child(module_or_map), fn
-      {key, value}, acc when key in [:id, :start, :restart, :shutdown, :type, :modules] ->
+      {key, value}, acc
+      when key in [:id, :start, :restart, :shutdown, :type, :modules, :significant] ->
         Map.put(acc, key, value)
 
       {key, _value}, _acc ->
